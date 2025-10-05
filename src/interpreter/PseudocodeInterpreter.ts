@@ -49,11 +49,15 @@ export class PseudocodeInterpreter {
   private parseFunctions(): void {
     for (let i = 0; i < this.lines.length; i++) {
       const line = this.lines[i];
-      const match = line.match(/^FUNCTION\s+(\w+)\s*\(([^)]*)\)/i);
+      const funcMatch = line.match(/^FUNCTION\s+(\w+)\s*\(([^)]*)\)/i);
+      const procMatch = line.match(/^PROCEDURE\s+(\w+)\s*\(([^)]*)\)/i);
+      const match = funcMatch || procMatch;
+
       if (match) {
         const funcName = match[1];
         const params = match[2].split(',').map(p => p.trim()).filter(p => p.length > 0);
-        const endLine = this.findMatchingEnd('FUNCTION', i);
+        const blockType = funcMatch ? 'FUNCTION' : 'PROCEDURE';
+        const endLine = this.findMatchingEnd(blockType, i);
         this.functions.set(funcName, {
           name: funcName,
           params,
@@ -243,15 +247,30 @@ export class PseudocodeInterpreter {
         this.state.currentLine++;
       }
     }
-    else if (upperLine.startsWith('FUNCTION ')) {
-      const funcDef = this.functions.get(line.match(/FUNCTION\s+(\w+)/i)![1]);
-      if (funcDef) {
-        this.state.currentLine = funcDef.endLine + 1;
+    else if (upperLine.startsWith('FUNCTION ') || upperLine.startsWith('PROCEDURE ')) {
+      const funcMatch = line.match(/(?:FUNCTION|PROCEDURE)\s+(\w+)/i);
+      if (funcMatch) {
+        const funcDef = this.functions.get(funcMatch[1]);
+        if (funcDef) {
+          this.state.currentLine = funcDef.endLine + 1;
+        } else {
+          this.state.currentLine++;
+        }
       } else {
         this.state.currentLine++;
       }
     }
-    else if (upperLine === 'ENDFUNCTION' || upperLine === 'END FUNCTION') {
+    else if (upperLine === 'ENDFUNCTION' || upperLine === 'END FUNCTION' || upperLine === 'ENDPROCEDURE' || upperLine === 'END PROCEDURE') {
+      this.state.currentLine++;
+    }
+    else if (upperLine.startsWith('CALL ')) {
+      const callMatch = line.match(/CALL\s+(\w+)\s*\(([^)]*)\)/i);
+      if (callMatch) {
+        const funcName = callMatch[1];
+        const argsStr = callMatch[2];
+        const args = argsStr ? argsStr.split(',').map(arg => this.evaluateExpression(arg.trim())) : [];
+        this.callFunction(funcName, args);
+      }
       this.state.currentLine++;
     }
     else if (upperLine.startsWith('RETURN')) {
@@ -355,7 +374,7 @@ export class PseudocodeInterpreter {
         const returnMatch = line.match(/RETURN\s+(.+)/i);
         returnValue = returnMatch ? this.evaluateExpression(returnMatch[1]) : undefined;
         break;
-      } else if (upperLine === 'ENDFUNCTION' || upperLine === 'END FUNCTION') {
+      } else if (upperLine === 'ENDFUNCTION' || upperLine === 'END FUNCTION' || upperLine === 'ENDPROCEDURE' || upperLine === 'END PROCEDURE') {
         break;
       } else {
         this.executeLine(line);
@@ -381,13 +400,25 @@ export class PseudocodeInterpreter {
       return items;
     }
 
-    const funcCallPattern = /(\w+)\s*\(([^()]*(?:\([^()]*\))?[^()]*)\)/g;
+    const builtInFunctions = ['LENGTH', 'LEN', 'SIZE'];
     let processedExpr = expr;
     let hasFunction = true;
 
     while (hasFunction) {
       hasFunction = false;
       processedExpr = processedExpr.replace(/(\w+)\s*\(([^()]*)\)/g, (match, funcName, argsStr) => {
+        const upperFuncName = funcName.toUpperCase();
+
+        if (builtInFunctions.includes(upperFuncName)) {
+          hasFunction = true;
+          const arg = argsStr.trim();
+          const value = this.evaluateExpression(arg);
+          if (Array.isArray(value)) {
+            return String(value.length);
+          }
+          return String(0);
+        }
+
         if (this.functions.has(funcName)) {
           hasFunction = true;
           const args = argsStr ? argsStr.split(',').map((arg: string) => this.evaluateExpression(arg.trim())) : [];
@@ -398,14 +429,34 @@ export class PseudocodeInterpreter {
       });
     }
 
-    processedExpr = processedExpr.replace(/(\w+)\[([^\]]+)\]/g, (match, arrayName, indexExpr) => {
-      const index = this.evaluateExpression(indexExpr);
+    const arrayAccessPattern = /(\w+)\[([^\]]+)\]/g;
+    let match;
+    const replacements: { match: string; value: any }[] = [];
+
+    while ((match = arrayAccessPattern.exec(processedExpr)) !== null) {
+      const arrayName = match[1];
+      const indexExpr = match[2];
+
+      let indexValue: any;
+      if (this.state.variables.hasOwnProperty(indexExpr)) {
+        indexValue = this.state.variables[indexExpr];
+      } else {
+        try {
+          indexValue = eval(indexExpr);
+        } catch {
+          indexValue = indexExpr;
+        }
+      }
+
       const array = this.state.variables[arrayName];
       if (array && Array.isArray(array)) {
-        return String(array[index]);
+        replacements.push({ match: match[0], value: array[indexValue] });
       }
-      return match;
-    });
+    }
+
+    for (const rep of replacements) {
+      processedExpr = processedExpr.replace(rep.match, String(rep.value));
+    }
 
     for (const [varName, value] of Object.entries(this.state.variables)) {
       const regex = new RegExp(`\\b${varName}\\b`, 'g');
