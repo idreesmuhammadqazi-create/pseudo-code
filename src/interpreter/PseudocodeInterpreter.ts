@@ -25,9 +25,14 @@ export class PseudocodeInterpreter {
   private lines: string[];
   private state: ExecutionState;
   private outputCallback: (message: string) => void;
+  private inputCallback: (prompt: string) => string | null;
   private functions: Map<string, FunctionDefinition>;
 
-  constructor(code: string, outputCallback: (message: string) => void) {
+  constructor(
+    code: string,
+    outputCallback: (message: string) => void,
+    inputCallback?: (prompt: string) => string | null
+  ) {
     this.lines = code.split('\n').map(line => line.trim()).filter(line => line.length > 0);
     this.state = {
       variables: {},
@@ -36,6 +41,7 @@ export class PseudocodeInterpreter {
       callStack: [],
     };
     this.outputCallback = outputCallback;
+    this.inputCallback = inputCallback || ((prompt) => window.prompt(prompt));
     this.functions = new Map();
     this.parseFunctions();
   }
@@ -124,10 +130,26 @@ export class PseudocodeInterpreter {
       }
       this.state.currentLine++;
     }
-    else if (upperLine.startsWith('OUTPUT ')) {
-      const expression = line.substring(7).trim();
+    else if (upperLine.startsWith('OUTPUT ') || upperLine.startsWith('PRINT ')) {
+      const keyword = upperLine.startsWith('OUTPUT ') ? 'OUTPUT ' : 'PRINT ';
+      const expression = line.substring(keyword.length).trim();
       const value = this.evaluateExpression(expression);
       this.outputCallback(String(value));
+      this.state.currentLine++;
+    }
+    else if (upperLine.startsWith('INPUT ')) {
+      const match = line.match(/INPUT\s+(\w+)/i);
+      if (match) {
+        const varName = match[1];
+        const promptMatch = line.match(/INPUT\s+\w+\s+WITH\s+"([^"]+)"/i);
+        const promptText = promptMatch ? promptMatch[1] : `Enter value for ${varName}:`;
+
+        const inputValue = this.inputCallback(promptText);
+        if (inputValue !== null) {
+          const numValue = parseFloat(inputValue);
+          this.state.variables[varName] = isNaN(numValue) ? inputValue : numValue;
+        }
+      }
       this.state.currentLine++;
     }
     else if (upperLine.startsWith('IF ')) {
@@ -439,14 +461,17 @@ export class PseudocodeInterpreter {
   private evaluateCondition(condition: string): boolean {
     condition = condition.trim();
 
-    // Replace variables with their values
+    condition = condition.replace(/\bAND\b/gi, '&&');
+    condition = condition.replace(/\bOR\b/gi, '||');
+    condition = condition.replace(/\bNOT\b/gi, '!');
+    condition = condition.replace(/\bMOD\b/gi, '%');
+
     let processedCondition = condition;
     for (const [varName, value] of Object.entries(this.state.variables)) {
       const regex = new RegExp(`\\b${varName}\\b`, 'g');
       processedCondition = processedCondition.replace(regex, String(value));
     }
 
-    // Evaluate the condition
     try {
       return eval(processedCondition);
     } catch {

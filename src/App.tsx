@@ -146,11 +146,13 @@ function App() {
               <div className="text-sm text-slate-600 space-y-2">
                 <div><code className="bg-slate-100 px-1 rounded">var ← value</code> or <code className="bg-slate-100 px-1 rounded">SET var TO value</code></div>
                 <div><code className="bg-slate-100 px-1 rounded">arr ← [1, 2, 3]</code> or <code className="bg-slate-100 px-1 rounded">arr[i] ← value</code></div>
-                <div><code className="bg-slate-100 px-1 rounded">OUTPUT expression</code></div>
+                <div><code className="bg-slate-100 px-1 rounded">OUTPUT expression</code> or <code className="bg-slate-100 px-1 rounded">PRINT expression</code></div>
+                <div><code className="bg-slate-100 px-1 rounded">INPUT var</code></div>
                 <div><code className="bg-slate-100 px-1 rounded">IF condition THEN ... ELSE ... ENDIF</code></div>
                 <div><code className="bg-slate-100 px-1 rounded">WHILE condition DO ... END WHILE</code></div>
                 <div><code className="bg-slate-100 px-1 rounded">FOR i ← 0 TO 5 ... NEXT i</code></div>
                 <div><code className="bg-slate-100 px-1 rounded">FUNCTION name(params) ... RETURN value ... ENDFUNCTION</code></div>
+                <div><code className="bg-slate-100 px-1 rounded">AND, OR, NOT, MOD operators</code></div>
                 <div><code className="bg-slate-100 px-1 rounded"># comment</code></div>
               </div>
             </div>
