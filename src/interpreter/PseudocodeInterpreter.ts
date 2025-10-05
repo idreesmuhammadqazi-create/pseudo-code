@@ -326,6 +326,49 @@ export class PseudocodeInterpreter {
     return this.lines.length;
   }
 
+  private callFunction(funcName: string, args: any[]): any {
+    const funcDef = this.functions.get(funcName);
+    if (!funcDef) {
+      return undefined;
+    }
+
+    const savedVariables = { ...this.state.variables };
+    const savedLine = this.state.currentLine;
+    const savedCallStack = [...this.state.callStack];
+
+    const newVariables: Record<string, any> = {};
+    for (let i = 0; i < funcDef.params.length; i++) {
+      newVariables[funcDef.params[i]] = args[i];
+    }
+    this.state.variables = newVariables;
+    this.state.callStack = [];
+
+    this.state.currentLine = funcDef.startLine + 1;
+
+    let returnValue: any = undefined;
+
+    while (this.state.currentLine <= funcDef.endLine) {
+      const line = this.lines[this.state.currentLine];
+      const upperLine = line.toUpperCase();
+
+      if (upperLine.startsWith('RETURN')) {
+        const returnMatch = line.match(/RETURN\s+(.+)/i);
+        returnValue = returnMatch ? this.evaluateExpression(returnMatch[1]) : undefined;
+        break;
+      } else if (upperLine === 'ENDFUNCTION' || upperLine === 'END FUNCTION') {
+        break;
+      } else {
+        this.executeLine(line);
+      }
+    }
+
+    this.state.variables = savedVariables;
+    this.state.currentLine = savedLine;
+    this.state.callStack = savedCallStack;
+
+    return returnValue;
+  }
+
   private evaluateExpression(expr: string): any {
     expr = expr.trim();
 
@@ -338,67 +381,50 @@ export class PseudocodeInterpreter {
       return items;
     }
 
-    const funcCallMatch = expr.match(/^(\w+)\s*\(([^)]*)\)$/);
-    if (funcCallMatch) {
-      const funcName = funcCallMatch[1];
-      const argsStr = funcCallMatch[2];
-      const args = argsStr ? argsStr.split(',').map(arg => this.evaluateExpression(arg.trim())) : [];
+    const funcCallPattern = /(\w+)\s*\(([^()]*(?:\([^()]*\))?[^()]*)\)/g;
+    let processedExpr = expr;
+    let hasFunction = true;
 
-      const funcDef = this.functions.get(funcName);
-      if (funcDef) {
-        const savedVariables = { ...this.state.variables };
-
-        const newVariables: Record<string, any> = {};
-        for (let i = 0; i < funcDef.params.length; i++) {
-          newVariables[funcDef.params[i]] = args[i];
+    while (hasFunction) {
+      hasFunction = false;
+      processedExpr = processedExpr.replace(/(\w+)\s*\(([^()]*)\)/g, (match, funcName, argsStr) => {
+        if (this.functions.has(funcName)) {
+          hasFunction = true;
+          const args = argsStr ? argsStr.split(',').map((arg: string) => this.evaluateExpression(arg.trim())) : [];
+          const result = this.callFunction(funcName, args);
+          return String(result);
         }
-        this.state.variables = newVariables;
+        return match;
+      });
+    }
 
-        this.state.callStack.push({
-          line: funcDef.startLine,
-          type: 'FUNCTION_CALL',
-          returnLine: this.state.currentLine,
-          savedVariables,
-          functionName: funcName,
-        });
+    processedExpr = processedExpr.replace(/(\w+)\[([^\]]+)\]/g, (match, arrayName, indexExpr) => {
+      const index = this.evaluateExpression(indexExpr);
+      const array = this.state.variables[arrayName];
+      if (array && Array.isArray(array)) {
+        return String(array[index]);
+      }
+      return match;
+    });
 
-        this.state.currentLine = funcDef.startLine + 1;
-
-        while (this.state.currentLine <= funcDef.endLine) {
-          const line = this.lines[this.state.currentLine];
-          const upperLine = line.toUpperCase();
-
-          if (upperLine.startsWith('RETURN')) {
-            const returnMatch = line.match(/RETURN\s+(.+)/i);
-            const returnValue = returnMatch ? this.evaluateExpression(returnMatch[1]) : undefined;
-
-            this.state.callStack.pop();
-            this.state.variables = savedVariables;
-            this.state.currentLine = this.state.callStack[this.state.callStack.length - 1]?.returnLine || this.state.currentLine;
-
-            return returnValue;
-          } else if (upperLine === 'ENDFUNCTION' || upperLine === 'END FUNCTION') {
-            break;
-          } else {
-            this.executeLine(line);
-          }
-        }
-
-        this.state.callStack.pop();
-        this.state.variables = savedVariables;
-
-        return this.state.variables['__return__'];
+    for (const [varName, value] of Object.entries(this.state.variables)) {
+      const regex = new RegExp(`\\b${varName}\\b`, 'g');
+      if (Array.isArray(value)) {
+        processedExpr = processedExpr.replace(regex, JSON.stringify(value));
+      } else {
+        const replacement = typeof value === 'string' ? `"${value}"` : String(value);
+        processedExpr = processedExpr.replace(regex, replacement);
       }
     }
 
-    if (expr.includes('+') && expr.includes('"')) {
+    if (processedExpr.includes('+') && processedExpr.includes('"')) {
       const parts: string[] = [];
       let current = '';
       let inString = false;
       let parenDepth = 0;
 
-      for (let i = 0; i < expr.length; i++) {
-        const char = expr[i];
+      for (let i = 0; i < processedExpr.length; i++) {
+        const char = processedExpr[i];
 
         if (char === '"') {
           inString = !inString;
@@ -423,31 +449,17 @@ export class PseudocodeInterpreter {
 
       let result = '';
       for (const part of parts) {
-        const evaluated = this.evaluateExpression(part);
-        result += String(evaluated);
+        if (part.startsWith('"') && part.endsWith('"')) {
+          result += part.slice(1, -1);
+        } else {
+          try {
+            result += String(eval(part));
+          } catch {
+            result += part;
+          }
+        }
       }
       return result;
-    }
-
-    let processedExpr = expr;
-
-    processedExpr = processedExpr.replace(/(\w+)\[([^\]]+)\]/g, (match, arrayName, indexExpr) => {
-      const index = this.evaluateExpression(indexExpr);
-      const array = this.state.variables[arrayName];
-      if (array && Array.isArray(array)) {
-        return String(array[index]);
-      }
-      return match;
-    });
-
-    for (const [varName, value] of Object.entries(this.state.variables)) {
-      const regex = new RegExp(`\\b${varName}\\b`, 'g');
-      if (Array.isArray(value)) {
-        processedExpr = processedExpr.replace(regex, JSON.stringify(value));
-      } else {
-        const replacement = typeof value === 'string' ? `"${value}"` : String(value);
-        processedExpr = processedExpr.replace(regex, replacement);
-      }
     }
 
     try {
