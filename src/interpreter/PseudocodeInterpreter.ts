@@ -400,6 +400,27 @@ export class PseudocodeInterpreter {
       return items;
     }
 
+    const simpleFuncMatch = expr.match(/^(\w+)\s*\(([^()]*)\)$/);
+    if (simpleFuncMatch) {
+      const funcName = simpleFuncMatch[1];
+      const argsStr = simpleFuncMatch[2];
+      const upperFuncName = funcName.toUpperCase();
+
+      if (['LENGTH', 'LEN', 'SIZE'].includes(upperFuncName)) {
+        const arg = argsStr.trim();
+        const value = this.evaluateExpression(arg);
+        if (Array.isArray(value)) {
+          return value.length;
+        }
+        return 0;
+      }
+
+      if (this.functions.has(funcName)) {
+        const args = argsStr ? argsStr.split(',').map((arg: string) => this.evaluateExpression(arg.trim())) : [];
+        return this.callFunction(funcName, args);
+      }
+    }
+
     const builtInFunctions = ['LENGTH', 'LEN', 'SIZE'];
     let processedExpr = expr;
     let hasFunction = true;
@@ -423,6 +444,9 @@ export class PseudocodeInterpreter {
           hasFunction = true;
           const args = argsStr ? argsStr.split(',').map((arg: string) => this.evaluateExpression(arg.trim())) : [];
           const result = this.callFunction(funcName, args);
+          if (Array.isArray(result)) {
+            return JSON.stringify(result);
+          }
           return String(result);
         }
         return match;
